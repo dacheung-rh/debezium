@@ -1,0 +1,256 @@
+
+
+sudo mkdir /opt/debezium
+sudo chown azureuser /opt/debezium
+tar -xvf java-11-openjdk-11.0.24.0.8-2.portable.jdk.el.x86_64.tar.xz -C /opt/debezium
+
+ln -s /opt/debezium/java-11-openjdk-11.0.24.0.8-2.portable.jdk.el.x86_64/ /opt/debezium/openjdk
+
+cat <<'EOF' >> /home/azureuser/.bashrc
+export JAVA_HOME=/opt/debezium/openjdk
+export PATH=$PATH:$JAVA_HOME/bin
+EOF
+. /home/azureuser/.bashrc
+
+
+unzip amq-streams-2.7.0-bin.zip -d /opt/debezium
+
+ln -s /opt/debezium/kafka_2.13-3.7.0.redhat-00007/ /opt/debezium/kafka
+
+cat <<'EOF' >> /home/azureuser/.bashrc
+export KAFKA_HOME=/opt/debezium/kafka
+EOF
+. /home/azureuser/.bashrc
+
+
+vi /opt/debezium/kafka/bin/connect-distributed.sh
+
+  export KAFKA_HEAP_OPTS=”-Xms25G -Xmx25G”
+
+
+cat <<'EOF' > /opt/debezium/kafka/config/debezium-distributed.properties
+bootstrap.servers=mfcehubns-sea-ngedlvn-prod-01.servicebus.windows.net:9093
+group.id=vg-prd-oracle-01-debezium-cluster
+
+offset.storage.topic=connect-offsets
+config.storage.topic=connect-configs
+status.storage.topic=connect-status
+
+offset.storage.replication.factor=1
+config.storage.replication.factor=1
+status.storage.replication.factor=1
+
+key.converter=org.apache.kafka.connect.json.JsonConverter
+value.converter=org.apache.kafka.connect.json.JsonConverter
+internal.key.converter=org.apache.kafka.connect.json.JsonConverter
+internal.value.converter=org.apache.kafka.connect.json.JsonConverter
+
+internal.key.converter.schemas.enable=false
+internal.value.converter.schemas.enable=false
+
+offset.flush.interval.ms=10000
+
+ssl.endpoint.identification.algorithm=
+security.protocol=SASL_SSL
+sasl.mechanism=PLAIN
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="Endpoint=sb://mfcehubns-sea-ngedlvn-prod-01.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=<secret>";
+
+producer.ssl.endpoint.identification.algorithm=
+producer.security.protocol=SASL_SSL
+producer.sasl.mechanism=PLAIN
+producer.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="Endpoint=sb://mfcehubns-sea-ngedlvn-prod-01.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=<secret>";
+
+consumer.ssl.endpoint.identification.algorithm=
+consumer.security.protocol=SASL_SSL
+consumer.sasl.mechanism=PLAIN
+consumer.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="Endpoint=sb://mfcehubns-sea-ngedlvn-prod-01.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=<secret>";
+plugin.path=/opt/debezium/connector-plugins
+EOF
+
+
+
+sudo mkdir  /var/log/debezium
+sudo chown azureuser /var/log/debezium/
+sudo timedatectl set-timezone "Asia/Hong_Kong"
+
+cp /home/azureuser/jolokia-agent-jvm-2.1.0-javaagent.jar /opt/debezium/
+
+cat <<'EOF' > /home/azureuser/start_debezium.sh
+export LOG_DIR="/var/log/debezium"
+export KAFKA_JMX_OPTS="-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https"
+
+$KAFKA_HOME/bin/connect-distributed.sh -daemon \
+  $KAFKA_HOME/config/debezium-distributed.properties
+EOF
+
+
+cat <<'EOF' > /home/azureuser/start_debezium.sh
+export LOG_DIR="/var/log/debezium"
+export KAFKA_JMX_OPTS="-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=ca.crt,serverCert=/home/azureuser/jolokia.crt,serverKey=/home/azureuser/jolokia.key"
+
+$KAFKA_HOME/bin/connect-distributed.sh -daemon \
+  $KAFKA_HOME/config/debezium-distributed.properties
+EOF
+
+
+
+
+chmod +x /home/azureuser/start_debezium.sh
+
+#####################################################################################################################
+
+java -jar /home/azureuser/jboss-eap-7.4.0-installer.jar
+
+cat <<EOF > /opt/debezium/jboss-eap-7.4/bin/init.d/jboss-eap.conf
+## Location of JDK
+JAVA_HOME="/opt/debezium/openjdk"
+## Location of JBoss EAP
+JBOSS_HOME="/opt/debezium/jboss-eap-7.4"
+## The username who should own the process.
+JBOSS_USER=azureuser
+## The mode JBoss EAP should start, standalone or domain
+JBOSS_MODE=standalone
+## Configuration for standalone mode
+JBOSS_CONFIG=standalone.xml
+## Additionals args to include in startup
+JBOSS_OPTS="-b 0.0.0.0"
+EOF
+
+sudo cp /opt/debezium/jboss-eap-7.4/bin/init.d/jboss-eap.conf /etc/default/
+
+sudo cp /opt/debezium/jboss-eap-7.4/bin/init.d/jboss-eap-rhel.sh /etc/init.d/
+sudo chmod +x /etc/init.d/jboss-eap-rhel.sh
+sudo chkconfig --add jboss-eap-rhel.sh
+sudo service jboss-eap-rhel start
+sudo chkconfig jboss-eap-rhel.sh on
+
+#####################################################################################################################
+
+
+cd /opt/debezium/jboss-eap-7.4
+java -jar /home/azureuser/fuse-eap-installer-7.13.0.jar
+
+sudo systemctl restart jboss-eap-rhel.service
+
+
+#######################################################
+
+[azureuser@debeziumvm ~]$ cat /etc/fstab
+/dev/mapper/rootvg-rootlv /                       xfs     defaults        0 0
+UUID=64191697-4854-484c-bb8b-52a42243088f /boot                   xfs     defaults        0 0
+UUID=6E66-F38E          /boot/efi               vfat    defaults,uid=0,gid=0,umask=077,shortname=winnt 0 2
+/dev/mapper/rootvg-homelv /home                   xfs     defaults        0 0
+/dev/mapper/rootvg-tmplv /tmp                    xfs     defaults        0 0
+/dev/mapper/rootvg-usrlv /usr                    xfs     defaults        0 0
+/dev/mapper/rootvg-varlv /var                    xfs     defaults        0 0
+/dev/disk/cloud/azure_resource-part1	/mnt	auto	defaults,nofail,x-systemd.requires=cloud-init.service,_netdev,comment=cloudconfig	0	2
+
+[azureuser@debeziumvm jboss-eap-7.4]$ sudo lvextend -l +100%FREE /dev/mapper/rootvg-rootlv
+  Size of logical volume rootvg/rootlv changed from 2.00 GiB (512 extents) to 118.00 GiB (30208 extents).
+  Logical volume rootvg/rootlv successfully resized.
+
+[azureuser@debeziumvm jboss-eap-7.4]$ sudo xfs_growfs /dev/mapper/rootvg-rootlv
+meta-data=/dev/mapper/rootvg-rootlv isize=512    agcount=4, agsize=131072 blks
+         =                       sectsz=4096  attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=1    bigtime=0 inobtcount=0
+data     =                       bsize=4096   blocks=524288, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=4096  sunit=1 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+data blocks changed from 524288 to 30932992
+
+
+#####################################################################################################################
+
+
+vi /opt/debezium/jboss-eap-7.4/standalone/configuration/standalone.xml
+
+            <root-logger>
+                <level name="DEBUG" />
+                <handlers>
+                    <handler name="CONSOLE" />
+                    <handler name="FILE" />
+                </handlers>
+            </root-logger>
+
+
+
+
+
+#####################################################################################################################
+"unable to find valid certification path to requested target"
+https://access.redhat.com/solutions/66405
+
+
+# generate CA cert and key
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -key ca.key -out ca.crt -days 3650 -subj "/C=HK/ST=HongKong/L=HongKong/O=Global Security/OU=ITD/CN=jolokia"
+
+## generate key and csr
+openssl req -nodes -newkey rsa:2048 -keyout jolokia.key -out jolokia.csr  -days 3650 -subj "/C=HK/ST=HongKong/L=HongKong/O=Global Security/OU=ITD/CN=localhost"
+
+openssl x509 -req -days 3650 -in jolokia.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out jolokia.crt
+
+## trust the CA
+sudo cp ./ca.crt /etc/pki/ca-trust/source/anchors/ca-jolokia.crt
+
+sudo update-ca-trust extract
+
+
+openssl verify -verbose -CAfile ca.crt jolokia.crt
+
+## verify cert expiry date
+
+openssl x509 -in jolokia.crt -text -noout
+
+
+## openssl s_client -showcerts -connect localhost:8778
+## openssl s_client -connect localhost:8778 -showcerts </dev/null | openssl x509 -outform PEM > jolokia.crt
+
+keytool -import -trustcacerts -alias jolokia -file jolokia.crt -keystore /opt/debezium/jolokia-client.truststore
+
+keytool -list -keystore /opt/debezium/jolokia-client.truststore
+
+echo 'JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStore=/opt/debezium/jolokia-client.truststore"' >> /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+echo 'JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStorePassword=changeit"' >> /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+
+cat /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+
+JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStore=/opt/debezium/jolokia-client.truststore"
+JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStorePassword="
+
+
+######################################################################################################################
+2025-07-20 01:01:38,784 DEBUG [io.hawt.web.proxy.ProxyServlet] (default task-2) Proxy to https://localhost:8778/jolokia/ failed: javax.net.ssl.SSLHandshakeException: PKIX path validation failed: java.security.cert.CertPathValidatorException: signature check failed
+	at java.base/sun.security.ssl.Alert.createSSLException(Alert.java:131)
+
+Caused by: sun.security.validator.ValidatorException: PKIX path validation failed: java.security.cert.CertPathValidatorException: signature check failed
+	at java.base/sun.security.validator.PKIXValidator.doValidate(PKIXValidator.java:369)
+	at java.base/sun.security.validator.PKIXValidator.engineValidate(PKIXValidator.java:275)
+	at java.base/sun.security.validator.Validator.validate(Validator.java:264)
+	at java.base/sun.security.ssl.X509TrustManagerImpl.validate(X509TrustManagerImpl.java:313)
+	at java.base/sun.security.ssl.X509TrustManagerImpl.checkTrusted(X509TrustManagerImpl.java:222)
+	at java.base/sun.security.ssl.X509TrustManagerImpl.checkServerTrusted(X509TrustManagerImpl.java:129)
+	at java.base/sun.security.ssl.CertificateMessage$T13CertificateConsumer.checkServerCerts(CertificateMessage.java:1341)
+	... 104 more
+Caused by: java.security.cert.CertPathValidatorException: signature check failed
+	at java.base/sun.security.provider.certpath.PKIXMasterCertPathValidator.validate(PKIXMasterCertPathValidator.java:135)
+	at java.base/sun.security.provider.certpath.PKIXCertPathValidator.validate(PKIXCertPathValidator.java:224)
+	at java.base/sun.security.provider.certpath.PKIXCertPathValidator.validate(PKIXCertPathValidator.java:144)
+	at java.base/sun.security.provider.certpath.PKIXCertPathValidator.engineValidate(PKIXCertPathValidator.java:83)
+	at java.base/java.security.cert.CertPathValidator.validate(CertPathValidator.java:309)
+	at java.base/sun.security.validator.PKIXValidator.doValidate(PKIXValidator.java:364)
+	... 110 more
+Caused by: java.security.SignatureException: Signature does not match.
+	at java.base/sun.security.x509.X509CertImpl.verify(X509CertImpl.java:416)
+	at java.base/sun.security.provider.certpath.BasicChecker.verifySignature(BasicChecker.java:166)
+	at java.base/sun.security.provider.certpath.BasicChecker.check(BasicChecker.java:147)
+	at java.base/sun.security.provider.certpath.PKIXMasterCertPathValidator.validate(PKIXMasterCertPathValidator.java:125)
+	... 115 more
+
+2025-07-20 01:01:38,785 DEBUG [io.undertow.request.error-response] (default task-2) Setting error code 500 for exchange HttpServerExchange{ POST /hawtio/proxy/https/localhost/8778/jolokia/}: java.lang.RuntimeException
+
+## the localhost selfsign cert is not sign by CA.  resolution: create a localhost certificate with CA signed
