@@ -75,14 +75,6 @@ sudo timedatectl set-timezone "Asia/Hong_Kong"
 
 cp /home/azureuser/jolokia-agent-jvm-2.1.0-javaagent.jar /opt/debezium/
 
-#cat <<'EOF' > /home/azureuser/start_debezium.sh
-#export LOG_DIR="/var/log/debezium"
-#export KAFKA_JMX_OPTS="-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https"
-
-#$KAFKA_HOME/bin/connect-distributed.sh -daemon \
-#  $KAFKA_HOME/config/debezium-distributed.properties
-#EOF
-
 
 cat <<'EOF' > /home/azureuser/start_debezium.sh
 export LOG_DIR="/var/log/debezium"
