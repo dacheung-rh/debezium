@@ -1,0 +1,124 @@
+# Resolution on Fuse console cannot connect debezium jmx endpoint
+#####################################################################################################################
+"unable to find valid certification path to requested target"
+https://access.redhat.com/solutions/66405
+
+0) Gracefully shutting down Debezium process
+curl -X PUT localhost:8083/connectors/vn-oracle-connector/pause
+
+curl -X GET -H "Accept:application/json" localhost:8083/connectors/vn-oracle-connector/status
+
+sudo systemctl stop debezium.service
+
+
+1) Generate ssl certificate for jolokia agent endpoint
+# generate CA cert and key
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -key ca.key -out ca.crt -days 3650 -subj "/C=HK/ST=HongKong/L=HongKong/O=Global Security/OU=ITD/CN=jolokia"
+
+## generate key and csr
+openssl req -nodes -newkey rsa:2048 -keyout jolokia.key -out jolokia.csr  -days 3650 -subj "/C=HK/ST=HongKong/L=HongKong/O=Global Security/OU=ITD/CN=localhost"
+openssl x509 -req -days 3650 -in jolokia.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out jolokia.crt
+
+## verify cert expiry date
+openssl x509 -in jolokia.crt -text -noout
+openssl verify -CAfile ca.crt jolokia.crt
+
+2a) configure ssl certificate for jolokia agent endpoint on debezium start up script
+## backup the start_debezium.sh
+cp /home/adoazureadmin01/start_debezium.sh /home/adoazureadmin01/start_debezium.sh_bak_20250809
+
+## create new start_debezium.sh
+cat <<'EOF' > /home/adoazureadmin01/start_debezium.sh
+export LOG_DIR="/var/log/debezium"
+export KAFKA_JMX_OPTS="-javaagent:/opt/debezium/applicationinsights-agent-3.5.4.jar \
+    -javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=/home/adoazureadmin01/ca.crt,serverCert=/home/adoazureadmin01/jolokia.crt,serverKey=/home/adoazureadmin01/jolokia.key"
+
+## retsart debezium server
+$KAFKA_HOME/bin/connect-distributed.sh -daemon \
+  $KAFKA_HOME/config/debezium-distributed.properties
+EOF
+
+2b) configure ssl certificate for jolokia agent endpoint on debezium start up service
+## backup the debezium.service
+cp /home/adoazureadmin01/debezium.service /home/adoazureadmin01/debezium.service_bak_20250809
+
+## create new debezium.service
+cat <<'EOF' > /home/adoazureadmin01/debezium.service
+[Unit]
+Description=Debezium Oracle Connector
+After=network.target nss-lookup.target
+
+[Service]
+Type=forking
+User=adoazureadmin01
+Group=adoazureadmin01
+Environment="LOG_DIR=/var/log/debezium"
+Environment="KAFKA_JMX_OPTS=-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=/home/adoazureadmin01/ca.crt,serverCert=/home/adoazureadmin01/jolokia.crt,serverKey=/home/adoazureadmin01/jolokia.key"
+
+Environment="JAVA_HOME=/opt/debezium/openjdk"
+Environment="KAFKA_HOME=/opt/debezium/kafka"
+ExecStart=/opt/debezium/kafka/bin/connect-distributed.sh -daemon /opt/debezium/kafka/config/debezium-distributed.properties
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo cp /home/adoazureadmin01/debezium.service /etc/systemd/system/
+sudo chmod a+r /etc/systemd/system/debezium.service
+sudo systemctl daemon-reload
+sudo systemctl enable debezium.service
+sudo systemctl start debezium.service
+
+3) Convert x509 certificate to truststore for Fuse Console (password)
+keytool -import -trustcacerts -alias jolokia -file jolokia.crt -keystore /opt/debezium/jolokia-client.truststore -storepass changeit
+# Tust this certificate? [no] yes
+
+keytool -list -keystore /opt/debezium/jolokia-client.truststore -storepass changeit
+
+4) add trust store setting to Jboss EAP server (Fuse Console)
+echo 'JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStore=/opt/debezium/jolokia-client.truststore"' >> /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+echo 'JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStorePassword=password"' >> /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+
+## review the standalone conf
+cat /opt/debezium/jboss-eap-7.4/bin/standalone.conf
+
+5) restart the fuse console server
+sudo systemctl restart jboss-eap-rhel.service
+
+6) start debezium and resume vn oracle connector
+sudo systemctl start debezium.service
+
+
+7) verify the certificate correctly loaded to jolokia endpoint
+## test with curl
+curl --cacert /home/adoazureadmin01/ca.crt https://localhost:8778/jolokia/
+
+## test with web browser
+https://10.197.146.4:8443/hawtio/ 
+
+Username:
+  debezium
+Password:
+  redh@T123
+
+# Configure as below:
+------------------------------------
+Name: debezium
+Scheme: https
+Host: localhost
+Port: 8778
+Path: /jolokia
+
+
+====================================================================================
+!!! Repeat steps 1 - 6 on another debezium VM server
+
+8) resume the VN Oracle connector with REST API and verify the connector status
+curl -X PUT localhost:8083/connectors/vn-oracle-connector/resume
+
+curl -X GET -H "Accept:application/json" localhost:8083/connectors/vn-oracle-connector/status
+
+
+
+
