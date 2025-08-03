@@ -203,7 +203,6 @@ cat <<'EOF' > /home/azureuser/start_debezium.sh
 export LOG_DIR="/var/log/debezium"
 export KAFKA_JMX_OPTS="-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=/home/azureuser/ca.crt,serverCert=/home/azureuser/jolokia.crt,serverKey=/home/azureuser/jolokia.key"
 
-## retsart debezium server
 $KAFKA_HOME/bin/connect-distributed.sh -daemon \
   $KAFKA_HOME/config/debezium-distributed.properties
 EOF
