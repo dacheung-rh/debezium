@@ -53,7 +53,7 @@ Type=forking
 User=adoazureadmin01
 Group=adoazureadmin01
 Environment="LOG_DIR=/var/log/debezium"
-Environment="KAFKA_JMX_OPTS=-javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=/home/adoazureadmin01/ca.crt,serverCert=/home/adoazureadmin01/jolokia.crt,serverKey=/home/adoazureadmin01/jolokia.key"
+Environment="KAFKA_JMX_OPTS=-javaagent:/opt/debezium/applicationinsights-agent-3.5.4.jar -javaagent:/opt/debezium/jolokia-agent-jvm-2.1.0-javaagent.jar=protocol=https,caCert=/home/adoazureadmin01/ca.crt,serverCert=/home/adoazureadmin01/jolokia.crt,serverKey=/home/adoazureadmin01/jolokia.key"
 
 Environment="JAVA_HOME=/opt/debezium/openjdk"
 Environment="KAFKA_HOME=/opt/debezium/kafka"
